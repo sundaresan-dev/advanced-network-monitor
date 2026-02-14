@@ -13,7 +13,7 @@ CONFIG_DIR="/etc/anm"
 LOG_DIR="/var/log/anm"
 DATA_DIR="/var/lib/anm"
 
-# Color codes
+# Color codes - Fixed escape sequences
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -403,35 +403,33 @@ verify_install() {
 
 # Print summary
 print_summary() {
-    cat << EOF
-
-${GREEN}════════════════════════════════════════════════════════════════${NC}
-${GREEN}              ANM INSTALLATION COMPLETE                         ${NC}
-${GREEN}════════════════════════════════════════════════════════════════${NC}
-
-${CYAN}Installation Details:${NC}
-  • Binary:      /usr/local/bin/anm
-  • Config:      /etc/anm/
-  • Logs:        /var/log/anm/
-  • Data:        /var/lib/anm/
-
-${CYAN}Quick Start Commands:${NC}
-  • Basic check:      ${YELLOW}anm -t example.com${NC}
-  • Continuous:       ${YELLOW}anm -t example.com -c -i 30${NC}
-  • JSON output:      ${YELLOW}anm -t example.com -j${NC}
-  • Verbose mode:     ${YELLOW}anm -t example.com -v${NC}
-
-${CYAN}Documentation:${NC}
-  • Help:             ${YELLOW}anm --help${NC}
-  • Man page:         ${YELLOW}man anm${NC}
-  • Config:           ${YELLOW}cat /etc/anm/anm.conf${NC}
-
-${CYAN}Uninstall:${NC}
-  • Run:              ${YELLOW}sudo anm-uninstall${NC}
-
-${GREEN}════════════════════════════════════════════════════════════════${NC}
-${GREEN}Thank you for installing ANM!${NC}
-EOF
+    echo
+    echo -e "${GREEN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}              ANM INSTALLATION COMPLETE                         ${NC}"
+    echo -e "${GREEN}════════════════════════════════════════════════════════════════${NC}"
+    echo
+    echo -e "${CYAN}Installation Details:${NC}"
+    echo "  • Binary:      /usr/local/bin/anm"
+    echo "  • Config:      /etc/anm/"
+    echo "  • Logs:        /var/log/anm/"
+    echo "  • Data:        /var/lib/anm/"
+    echo
+    echo -e "${CYAN}Quick Start Commands:${NC}"
+    echo -e "  • Basic check:      ${YELLOW}anm -t example.com${NC}"
+    echo -e "  • Continuous:       ${YELLOW}anm -t example.com -c -i 30${NC}"
+    echo -e "  • JSON output:      ${YELLOW}anm -t example.com -j${NC}"
+    echo -e "  • Verbose mode:     ${YELLOW}anm -t example.com -v${NC}"
+    echo
+    echo -e "${CYAN}Documentation:${NC}"
+    echo -e "  • Help:             ${YELLOW}anm --help${NC}"
+    echo -e "  • Man page:         ${YELLOW}man anm${NC}"
+    echo -e "  • Config:           ${YELLOW}cat /etc/anm/anm.conf${NC}"
+    echo
+    echo -e "${CYAN}Uninstall:${NC}"
+    echo -e "  • Run:              ${YELLOW}sudo anm-uninstall${NC}"
+    echo
+    echo -e "${GREEN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}Thank you for installing ANM!${NC}"
 }
 
 # Main installation flow
