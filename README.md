@@ -40,5 +40,3 @@ A comprehensive **network monitoring tool** designed for **Site Reliability Engi
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sundaresan-dev/advanced-network-monitor/main/install.sh | sudo bash
-
----
