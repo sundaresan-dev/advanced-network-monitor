@@ -1,0 +1,1314 @@
+#!/bin/bash
+
+# ============================================================================
+# SMART SRE NETWORK MONITOR - Enterprise Edition
+# ============================================================================
+
+# Color codes for better readability - Optimized for both white and black backgrounds
+RED='\033[0;91m'        # Bright Red
+GREEN='\033[0;92m'      # Bright Green
+YELLOW='\033[0;93m'     # Bright Yellow
+BLUE='\033[0;94m'       # Bright Blue
+PURPLE='\033[0;95m'     # Bright Purple
+CYAN='\033[0;96m'       # Bright Cyan
+WHITE='\033[1;97m'      # Bold Bright White
+ORANGE='\033[0;33m'     # Orange
+GRAY='\033[0;90m'       # Gray
+BOLD='\033[1m'
+DIM='\033[2m'
+UNDERLINE='\033[4m'
+NC='\033[0m'            # No Color
+
+# Unicode symbols for better UI
+CHECK_MARK="✓"
+CROSS_MARK="✗"
+WARNING_MARK="⚠"
+INFO_MARK="ℹ"
+ARROW_MARK="→"
+BULLET_MARK="•"
+BOX_DRAWING_HORIZONTAL="─"
+BOX_DRAWING_VERTICAL="│"
+BOX_DRAWING_CORNER_TL="┌"
+BOX_DRAWING_CORNER_TR="┐"
+BOX_DRAWING_CORNER_BL="└"
+BOX_DRAWING_CORNER_BR="┘"
+BOX_DRAWING_TEE_LEFT="├"
+BOX_DRAWING_TEE_RIGHT="┤"
+BOX_DRAWING_DOUBLE_HORIZONTAL="═"
+BOX_DRAWING_DOUBLE_VERTICAL="║"
+BOX_DRAWING_DOUBLE_CORNER_TL="╔"
+BOX_DRAWING_DOUBLE_CORNER_TR="╗"
+BOX_DRAWING_DOUBLE_CORNER_BL="╚"
+BOX_DRAWING_DOUBLE_CORNER_BR="╝"
+
+# Box drawing constants for consistent width
+BOX_WIDTH=78
+CONTENT_WIDTH=$((BOX_WIDTH - 4))
+
+# Version and Author info
+VERSION="2.0.0"
+AUTHOR="Sundaresan"
+GITHUB="https://github.com/sundaresan-dev"
+LINKEDIN="https://linkedin.com/in/sundaresan-dev"
+INSTAGRAM="https://instagram.com/sundar.hac"
+
+# Default configuration
+DEFAULT_PORTS=(22 80 443 3306 5432 27017 6379 8080 8443 9200 5601 9090 3000)
+DEFAULT_INTERVAL=30
+LOG_FILE=""
+CONTINUOUS_MODE=false
+INTERVAL=$DEFAULT_INTERVAL
+NO_TRACEROUTE=false
+JSON_OUTPUT=false
+VERBOSE=false
+ALERT_THRESHOLD=80
+PERFORMANCE_LOG="performance-$(date +%Y%m%d).csv"
+
+# Threshold defaults (can be overridden by env vars)
+LATENCY_WARN=${LATENCY_WARN:-150}      # ms
+LATENCY_CRIT=${LATENCY_CRIT:-300}      # ms
+PACKET_LOSS_WARN=${PACKET_LOSS_WARN:-2} # %
+PACKET_LOSS_CRIT=${PACKET_LOSS_CRIT:-5} # %
+DNS_TIME_WARN=${DNS_TIME_WARN:-100}     # ms
+DNS_TIME_CRIT=${DNS_TIME_CRIT:-200}     # ms
+SSL_EXPIRY_WARN=${SSL_EXPIRY_WARN:-30}  # days
+SSL_EXPIRY_CRIT=${SSL_EXPIRY_CRIT:-7}   # days
+RESPONSE_TIME_WARN=${RESPONSE_TIME_WARN:-500}  # ms
+RESPONSE_TIME_CRIT=${RESPONSE_TIME_CRIT:-1000} # ms
+
+# Initialize variables
+TARGET=""
+IP=""
+ISSUE=""
+SOLUTION=""
+declare -a WARNINGS=()
+declare -a CRITICAL=()
+declare -a METRICS=()
+declare -a HISTORY=()
+declare -a OPEN_PORTS=()
+HEALTH_SCORE=100
+CHECK_COUNT=0
+FAILURE_COUNT=0
+
+# ============================================================================
+# ENHANCED UI FUNCTIONS WITH PERFECT ALIGNMENT
+# ============================================================================
+
+# Function to show credits
+show_credits() {
+    echo
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "  ${BOLD}${WHITE}SMART SRE NETWORK MONITOR v${VERSION}${NC}"
+    echo -e "  ${DIM}Created by ${AUTHOR}${NC}"
+    echo -e "  ${BLUE}🔗 GitHub:${NC}  ${GITHUB}"
+    echo -e "  ${BLUE}🔗 LinkedIn:${NC} ${LINKEDIN}"
+    echo -e "  ${BLUE}📷 Instagram:${NC} ${INSTAGRAM}"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo
+}
+
+# Function to center text within a given width
+center_text() {
+    local text="$1"
+    local width="$2"
+    local text_length=${#text}
+    local padding=$(( (width - text_length) / 2 ))
+    local extra_padding=$(( (width - text_length) % 2 ))
+    
+    printf "%*s%s%*s" $padding "" "$text" $((padding + extra_padding)) ""
+}
+
+# Function to draw a double-line header with perfectly centered text
+draw_glow_header() {
+    local title=$1
+    local color=${2:-$CYAN}
+    
+    echo
+    # Top border
+    printf "${color}${BOX_DRAWING_DOUBLE_CORNER_TL}"
+    printf "%0.s${BOX_DRAWING_DOUBLE_HORIZONTAL}" $(seq 1 $((BOX_WIDTH - 2)))
+    printf "${BOX_DRAWING_DOUBLE_CORNER_TR}${NC}\n"
+    
+    # Title line with centered text
+    printf "${color}${BOX_DRAWING_DOUBLE_VERTICAL}${NC}"
+    printf "%*s" 1 ""
+    printf "${BOLD}${WHITE}%s${NC}" "$(center_text "$title" $((BOX_WIDTH - 4)))"
+    printf "%*s" 1 ""
+    printf "${color}${BOX_DRAWING_DOUBLE_VERTICAL}${NC}\n"
+    
+    # Bottom border
+    printf "${color}${BOX_DRAWING_DOUBLE_CORNER_BL}"
+    printf "%0.s${BOX_DRAWING_DOUBLE_HORIZONTAL}" $(seq 1 $((BOX_WIDTH - 2)))
+    printf "${BOX_DRAWING_DOUBLE_CORNER_BR}${NC}\n"
+}
+
+# Function to draw a section header with perfect alignment
+draw_section_header() {
+    local title=$1
+    local color=${2:-$BLUE}
+    local number=$3
+    
+    echo
+    # Top border with section number
+    printf "${color}${BOX_DRAWING_CORNER_TL}"
+    printf "%0.s${BOX_DRAWING_HORIZONTAL}" $(seq 1 4)
+    printf " ${BOLD}${WHITE}[%s] %s${NC} " "$number" "$title"
+    local remaining=$((BOX_WIDTH - ${#title} - ${#number} - 10))
+    printf "${color}%0.s${BOX_DRAWING_HORIZONTAL}" $(seq 1 $remaining)
+    printf "${BOX_DRAWING_CORNER_TR}${NC}\n"
+    
+    # Left border for content
+    printf "${color}${BOX_DRAWING_VERTICAL}${NC}\n"
+}
+
+# Function to close a section
+close_section() {
+    local color=${1:-$BLUE}
+    printf "${color}${BOX_DRAWING_CORNER_BL}"
+    printf "%0.s${BOX_DRAWING_HORIZONTAL}" $(seq 1 $((BOX_WIDTH - 2)))
+    printf "${BOX_DRAWING_CORNER_BR}${NC}\n"
+}
+
+# Function to draw a status line with proper indentation - FIXED
+draw_status_line() {
+    local status=$1
+    local message=$2
+    local value=$3
+    local unit=$4
+    
+    # Build the line using echo -e instead of printf
+    local line="  ${BLUE}${BOX_DRAWING_VERTICAL}   "
+    
+    case $status in
+        OK)      line+="${GREEN}${BOLD}${CHECK_MARK}${NC} " ;;
+        WARN)    line+="${YELLOW}${BOLD}${WARNING_MARK}${NC} " ;;
+        FAIL)    line+="${RED}${BOLD}${CROSS_MARK}${NC} " ;;
+        INFO)    line+="${CYAN}${BOLD}${INFO_MARK}${NC} " ;;
+    esac
+    
+    line+="${BOLD}${WHITE}${message}${NC}"
+    
+    if [ -n "$value" ]; then
+        line+=" ${DIM}${value}${NC}"
+        [ -n "$unit" ] && line+=" ${DIM}${unit}${NC}"
+    fi
+    
+    echo -e "$line"
+}
+
+# Function to draw a details line - FIXED
+draw_details_line() {
+    local details=$1
+    local indent=${2:-2}
+    
+    # Use echo -e instead of printf
+    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   $(printf "%*s" $indent "")${DIM}${details}${NC}"
+}
+
+# Function to print status with aligned columns
+print_status() {
+    local status=$1
+    local message=$2
+    local value=$3
+    local unit=$4
+    
+    draw_status_line "$status" "$message" "$value" "$unit"
+}
+
+# Enhanced help function with perfect alignment
+show_help() {
+    clear
+    draw_glow_header "SMART SRE NETWORK MONITOR - HELP" "$CYAN"
+    echo
+    
+    # USAGE section
+    printf "${BOLD}${WHITE}  ╔════════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${BOLD}${WHITE}  ║                           USAGE                                 ║${NC}\n"
+    printf "${BOLD}${WHITE}  ╚════════════════════════════════════════════════════════════════╝${NC}\n"
+    printf "    ${CYAN}$0 [OPTIONS]${NC}\n"
+    echo
+    
+    # BASIC OPTIONS section
+    printf "${BOLD}${WHITE}  ╔════════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${BOLD}${WHITE}  ║                       BASIC OPTIONS                             ║${NC}\n"
+    printf "${BOLD}${WHITE}  ╚════════════════════════════════════════════════════════════════╝${NC}\n"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "-t, --target DOMAIN/IP" "Target domain or IP address (required)"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "-p, --ports \"LIST\"" "Custom ports to check (space-separated)"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "-h, --help" "Show this help message"
+    echo
+    
+    # OUTPUT OPTIONS section
+    printf "${BOLD}${WHITE}  ╔════════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${BOLD}${WHITE}  ║                       OUTPUT OPTIONS                            ║${NC}\n"
+    printf "${BOLD}${WHITE}  ╚════════════════════════════════════════════════════════════════╝${NC}\n"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "-j, --json" "Output in JSON format"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "-v, --verbose" "Verbose output with details"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "-l, --log FILE" "Log output to specified file"
+    echo
+    
+    # CONTINUOUS MONITORING section
+    printf "${BOLD}${WHITE}  ╔════════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${BOLD}${WHITE}  ║                    CONTINUOUS MONITORING                        ║${NC}\n"
+    printf "${BOLD}${WHITE}  ╚════════════════════════════════════════════════════════════════╝${NC}\n"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "-c, --continuous" "Run in continuous mode"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "-i, --interval SECONDS" "Check interval (default: 30)"
+    echo
+    
+    # FEATURE TOGGLES section
+    printf "${BOLD}${WHITE}  ╔════════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${BOLD}${WHITE}  ║                       FEATURE TOGGLES                           ║${NC}\n"
+    printf "${BOLD}${WHITE}  ╚════════════════════════════════════════════════════════════════╝${NC}\n"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "--no-traceroute" "Skip traceroute on failure"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "--no-security" "Skip security checks"
+    printf "    ${GREEN}%-25s${NC} ${DIM}%-50s${NC}\n" "--no-dependency" "Skip dependency analysis"
+    echo
+    
+    # THRESHOLD TUNING section
+    printf "${BOLD}${WHITE}  ╔════════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${BOLD}${WHITE}  ║                       THRESHOLD TUNING                          ║${NC}\n"
+    printf "${BOLD}${WHITE}  ╚════════════════════════════════════════════════════════════════╝${NC}\n"
+    printf "    ${YELLOW}%-20s${NC} ${WHITE}%-10s${NC} ${DIM}%s${NC}\n" "Latency:" "WARN:${LATENCY_WARN}ms" "CRIT:${LATENCY_CRIT}ms"
+    printf "    ${YELLOW}%-20s${NC} ${WHITE}%-10s${NC} ${DIM}%s${NC}\n" "Packet Loss:" "WARN:${PACKET_LOSS_WARN}%" "CRIT:${PACKET_LOSS_CRIT}%"
+    printf "    ${YELLOW}%-20s${NC} ${WHITE}%-10s${NC} ${DIM}%s${NC}\n" "DNS Time:" "WARN:${DNS_TIME_WARN}ms" "CRIT:${DNS_TIME_CRIT}ms"
+    printf "    ${YELLOW}%-20s${NC} ${WHITE}%-10s${NC} ${DIM}%s${NC}\n" "SSL Expiry:" "WARN:${SSL_EXPIRY_WARN}d" "CRIT:${SSL_EXPIRY_CRIT}d"
+    printf "    ${YELLOW}%-20s${NC} ${WHITE}%-10s${NC} ${DIM}%s${NC}\n" "Response Time:" "WARN:${RESPONSE_TIME_WARN}ms" "CRIT:${RESPONSE_TIME_CRIT}ms"
+    echo
+    
+    # EXAMPLES section
+    printf "${BOLD}${WHITE}  ╔════════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${BOLD}${WHITE}  ║                          EXAMPLES                               ║${NC}\n"
+    printf "${BOLD}${WHITE}  ╚════════════════════════════════════════════════════════════════╝${NC}\n"
+    printf "    ${CYAN}Basic run:${NC}\n"
+    printf "      ${BOLD}$0 -t google.com${NC}\n"
+    printf "\n"
+    printf "    ${CYAN}Continuous monitoring:${NC}\n"
+    printf "      ${BOLD}$0 -t google.com -c -i 30 -l /var/log/sre.log${NC}\n"
+    printf "\n"
+    printf "    ${CYAN}Custom ports:${NC}\n"
+    printf "      ${BOLD}$0 -t myapp.com -p \"22 80 443 8080 3306\" --no-traceroute${NC}\n"
+    printf "\n"
+    printf "    ${CYAN}Tune thresholds:${NC}\n"
+    printf "      ${BOLD}LATENCY_WARN=50 LATENCY_CRIT=200 $0 -t myserver.com${NC}\n"
+    printf "\n"
+    printf "    ${CYAN}JSON output:${NC}\n"
+    printf "      ${BOLD}$0 -t api.example.com -j${NC}\n"
+    echo
+    
+    # Show credits at the end of help
+    show_credits
+    exit 0
+}
+
+# Parse command line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -t|--target) TARGET="$2"; shift 2 ;;
+            -p|--ports) IFS=' ' read -ra PORTS <<< "$2"; shift 2 ;;
+            -l|--log) LOG_FILE="$2"; shift 2 ;;
+            -i|--interval) INTERVAL="$2"; shift 2 ;;
+            -c|--continuous) CONTINUOUS_MODE=true; shift ;;
+            -j|--json) JSON_OUTPUT=true; shift ;;
+            -v|--verbose) VERBOSE=true; shift ;;
+            --no-traceroute) NO_TRACEROUTE=true; shift ;;
+            --no-security) NO_SECURITY=true; shift ;;
+            --no-dependency) NO_DEPENDENCY=true; shift ;;
+            -h|--help) show_help ;;
+            *) echo "Unknown option: $1"; show_help ;;
+        esac
+    done
+
+    # Validate required arguments
+    if [ -z "$TARGET" ]; then
+        printf "${YELLOW}${INFO_MARK} No target specified.${NC}\n"
+        printf "${CYAN}Enter Domain or IP: ${NC}"
+        read TARGET
+    fi
+
+    # Set default ports if not specified
+    if [ ${#PORTS[@]} -eq 0 ]; then
+        PORTS=("${DEFAULT_PORTS[@]}")
+    fi
+
+    # Setup logging
+    if [ -n "$LOG_FILE" ]; then
+        exec > >(tee -a "$LOG_FILE") 2>&1
+        printf "${BLUE}${INFO_MARK} Logging to: $LOG_FILE${NC}\n"
+    fi
+}
+
+# Function to check if input is IP (IPv4 and IPv6)
+is_ip() {
+    [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+    [[ $1 =~ ^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$ ]]
+}
+
+# Function to log metrics
+log_metric() {
+    local name=$1
+    local value=$2
+    local unit=$3
+    local severity=${4:-"info"}
+    METRICS+=("$name: $value $unit")
+    
+    # Log to CSV for trending
+    echo "$(date +%Y-%m-%d,%H:%M:%S),$TARGET,$name,$value,$unit" >> "$PERFORMANCE_LOG"
+    
+    # Check thresholds and add warnings/criticals
+    case $name in
+        "latency")
+            check_threshold "$value" "$LATENCY_WARN" "$LATENCY_CRIT" "Latency" "$unit"
+            ;;
+        "packet_loss")
+            check_threshold "$value" "$PACKET_LOSS_WARN" "$PACKET_LOSS_CRIT" "Packet Loss" "$unit"
+            ;;
+        "dns_time")
+            check_threshold "$value" "$DNS_TIME_WARN" "$DNS_TIME_CRIT" "DNS Time" "$unit"
+            ;;
+        "response_time")
+            check_threshold "$value" "$RESPONSE_TIME_WARN" "$RESPONSE_TIME_CRIT" "Response Time" "$unit"
+            ;;
+        "ssl_days_left")
+            if [ "$value" -lt "$SSL_EXPIRY_CRIT" ]; then
+                CRITICAL+=("SSL certificate expires in $value days")
+            elif [ "$value" -lt "$SSL_EXPIRY_WARN" ]; then
+                WARNINGS+=("SSL certificate expires in $value days")
+            fi
+            ;;
+    esac
+}
+
+# Function to check thresholds
+check_threshold() {
+    local value=$1
+    local warn=$2
+    local crit=$3
+    local name=$4
+    local unit=$5
+    
+    if (( $(echo "$value > $crit" | bc -l 2>/dev/null || echo 0) )); then
+        CRITICAL+=("$name critical: $value $unit (threshold: $crit $unit)")
+        HEALTH_SCORE=$((HEALTH_SCORE - 20))
+    elif (( $(echo "$value > $warn" | bc -l 2>/dev/null || echo 0) )); then
+        CRITICAL+=("$name warning: $value $unit (threshold: $warn $unit)")
+        HEALTH_SCORE=$((HEALTH_SCORE - 10))
+    fi
+}
+
+# Function to calculate health score
+calculate_health_score() {
+    HEALTH_SCORE=100
+    HEALTH_SCORE=$((HEALTH_SCORE - (${#WARNINGS[@]} * 5)))
+    HEALTH_SCORE=$((HEALTH_SCORE - (${#CRITICAL[@]} * 20)))
+    [ $HEALTH_SCORE -lt 0 ] && HEALTH_SCORE=0
+}
+
+# ============================================================================
+# MONITORING FUNCTIONS
+# ============================================================================
+
+# DNS Check
+check_dns() {
+    draw_section_header "DNS CHECK" "$BLUE" "1"
+    
+    if is_ip $TARGET; then
+        IP=$TARGET
+        print_status "INFO" "Input detected as IP address"
+        draw_details_line "No DNS resolution needed"
+    else
+        # Try multiple DNS servers
+        local dns_servers=("8.8.8.8" "1.1.1.1" "208.67.222.222")
+        local resolved=false
+        
+        for DNS in "${dns_servers[@]}"; do
+            local start_time=$(date +%s%N)
+            IP=$(dig +short @$DNS $TARGET | head -n 1)
+            local end_time=$(date +%s%N)
+            local dns_time=$(( ($end_time - $start_time) / 1000000 ))
+            
+            if [ -n "$IP" ]; then
+                print_status "OK" "DNS Resolved via $DNS" "${dns_time}" "ms"
+                draw_details_line "$TARGET → $IP"
+                log_metric "dns_time" "$dns_time" "ms"
+                resolved=true
+                break
+            fi
+        done
+        
+        if [ "$resolved" = false ]; then
+            ISSUE="DNS Resolution Failure"
+            SOLUTION="Check DNS server, verify domain spelling, restart DNS service or check /etc/resolv.conf."
+            print_status "FAIL" "$ISSUE"
+            draw_details_line "$SOLUTION"
+            close_section "$BLUE"
+            return 1
+        fi
+        
+        # DNSSEC check
+        if dig +dnssec $TARGET | grep -q "ad;"; then
+            print_status "OK" "DNSSEC validated"
+        fi
+        
+        # Get all IPs (for load balancers)
+        local all_ips=$(dig +short $TARGET)
+        if [ $(echo "$all_ips" | wc -l) -gt 1 ]; then
+            print_status "INFO" "Multiple IPs found"
+            draw_details_line "Load balancer detected: $(echo $all_ips | tr '\n' ' ')"
+        fi
+        
+        # Reverse DNS lookup
+        local reverse_dns=$(dig +short -x $IP)
+        if [ -n "$reverse_dns" ]; then
+            print_status "OK" "Reverse DNS" "$reverse_dns"
+        fi
+    fi
+    close_section "$BLUE"
+    return 0
+}
+
+# Network Layer Checks - FIXED
+check_network() {
+    draw_section_header "NETWORK LAYER CHECKS" "$BLUE" "2"
+    
+    if ping -c 4 $IP &>/dev/null; then
+        local ping_output=$(ping -c 4 $IP 2>/dev/null)
+        
+        # Extract metrics with proper error handling
+        local latency="0"
+        local packet_loss="0"
+        local jitter="0"
+        
+        # Extract latency from rtt line
+        if echo "$ping_output" | grep -q "rtt"; then
+            latency=$(echo "$ping_output" | grep "rtt" | awk -F '/' '{print $5}')
+            jitter=$(echo "$ping_output" | grep "rtt" | awk -F '/' '{print $6}')
+            # Remove any non-numeric characters
+            latency=$(echo "$latency" | sed 's/[^0-9.]//g')
+            jitter=$(echo "$jitter" | sed 's/[^0-9.]//g')
+        fi
+        
+        # Extract packet loss
+        if echo "$ping_output" | grep -q "packet loss"; then
+            packet_loss=$(echo "$ping_output" | grep -oP '\d+(?=% packet loss)' | head -1)
+            [ -z "$packet_loss" ] && packet_loss="0"
+        fi
+        
+        print_status "OK" "Host Reachable"
+        
+        # Use echo -e instead of printf
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${DIM}Latency: ${latency:-0} ms | Jitter: ${jitter:-0} ms | Packet Loss: ${packet_loss:-0}%${NC}"
+        
+        # Log metrics
+        log_metric "latency" "${latency:-0}" "ms"
+        log_metric "jitter" "${jitter:-0}" "ms"
+        log_metric "packet_loss" "$packet_loss" "%"
+        
+        # Connection stability test
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}${NC}"
+        print_status "INFO" "Connection stability"
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${DIM}Testing with 10 pings...${NC}"
+        
+        local stability_output=$(ping -c 10 $IP 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            local loss=$(echo "$stability_output" | grep -oP '\d+(?=% packet loss)' | head -1)
+            [ -z "$loss" ] && loss="0"
+            
+            # Remove any non-numeric characters
+            loss=$(echo "$loss" | sed 's/[^0-9]//g')
+            
+            if [ "$loss" -lt 2 ] 2>/dev/null; then
+                print_status "OK" "Stable connection" "${loss}%" "loss"
+            elif [ "$loss" -lt 5 ] 2>/dev/null; then
+                print_status "WARN" "Moderate packet loss" "${loss}%" "loss"
+            else
+                print_status "FAIL" "Unstable connection" "${loss}%" "loss"
+            fi
+        fi
+    else
+        ISSUE="Network Connectivity Issue"
+        SOLUTION="Server unreachable. Check firewall, routing, security groups or server status."
+        print_status "FAIL" "$ISSUE"
+        draw_details_line "$SOLUTION"
+        
+        # Traceroute on failure (unless disabled)
+        if [ "$NO_TRACEROUTE" = false ]; then
+            echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}${NC}"
+            print_status "INFO" "Running traceroute"
+            local trace_output=$(traceroute -m 15 $IP 2>/dev/null | head -3 | tr '\n' ' ' | sed 's/  / /g')
+            draw_details_line "First hops: $trace_output"
+        fi
+        close_section "$BLUE"
+        return 1
+    fi
+    
+    # MTR check if available and verbose mode
+    if command -v mtr &>/dev/null && [ "$VERBOSE" = true ]; then
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}${NC}"
+        print_status "INFO" "Quick MTR report"
+        local mtr_output=$(mtr -r -c 5 $IP | tail -3 | tr '\n' ' ' | sed 's/  / /g')
+        draw_details_line "Top hops: $mtr_output"
+    fi
+    close_section "$BLUE"
+    return 0
+}
+
+# Port Scanning with aligned progress bar - FIXED and DEFINED
+check_ports() {
+    draw_section_header "PORT SCANNING & SERVICE DETECTION" "$BLUE" "3"
+    
+    OPEN_PORTS=()
+    local total_ports=${#PORTS[@]}
+    local current=0
+    local open_count=0
+    
+    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${DIM}Scanning ports:${NC}"
+    
+    for PORT in "${PORTS[@]}"; do
+        current=$((current + 1))
+        
+        # Show progress bar
+        local percent=$((current * 100 / total_ports))
+        local bar_length=40
+        local filled=$((percent * bar_length / 100))
+        local empty=$((bar_length - filled))
+        
+        # Use printf for progress bar (this is safe as it doesn't contain special chars)
+        printf "\r  ${BLUE}${BOX_DRAWING_VERTICAL}   [${GREEN}"
+        printf "%0.s=" $(seq 1 $filled)
+        printf "${DIM}%0.s-${NC}" $(seq 1 $empty)
+        printf "] %3d%%" $percent
+        
+        timeout 2 bash -c "</dev/tcp/$IP/$PORT" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            OPEN_PORTS+=($PORT)
+            open_count=$((open_count + 1))
+            
+            # Service detection
+            case $PORT in
+                22) SERVICE="SSH" ;;
+                80) SERVICE="HTTP" ;;
+                443) SERVICE="HTTPS" ;;
+                3306) SERVICE="MySQL" ;;
+                5432) SERVICE="PostgreSQL" ;;
+                27017) SERVICE="MongoDB" ;;
+                6379) SERVICE="Redis" ;;
+                8080) SERVICE="HTTP-Alt" ;;
+                8443) SERVICE="HTTPS-Alt" ;;
+                9200) SERVICE="Elasticsearch" ;;
+                5601) SERVICE="Kibana" ;;
+                9090) SERVICE="Prometheus" ;;
+                3000) SERVICE="Grafana" ;;
+                *) SERVICE="Unknown" ;;
+            esac
+            
+            # Print found port immediately
+            echo
+            echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${GREEN}${CHECK_MARK} Port ${PORT} (${SERVICE})${NC}"
+        fi
+    done
+    
+    # Clear progress line and show summary
+    echo
+    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${GREEN}${CHECK_MARK} Scan complete: ${open_count}/${total_ports} ports open${NC}"
+    
+    # Log open ports count
+    log_metric "open_ports" "${#OPEN_PORTS[@]}" "ports"
+    
+    # Banner grabbing in verbose mode
+    if [ ${#OPEN_PORTS[@]} -gt 0 ] && [ "$VERBOSE" = true ]; then
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}${NC}"
+        print_status "INFO" "Banner grabbing"
+        for PORT in "${OPEN_PORTS[@]}"; do
+            local banner=$(timeout 2 nc -v $IP $PORT 2>&1 | head -n 1 | cut -c1-60)
+            if [ -n "$banner" ]; then
+                echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${DIM}Port ${PORT}: ${banner}${NC}"
+            fi
+        done
+    fi
+    close_section "$BLUE"
+}
+
+# HTTP/HTTPS Checks with aligned output
+check_http() {
+    local port=$1
+    local protocol=$2
+    
+    echo -e "\n  ${BLUE}${BOX_DRAWING_VERTICAL}   ${CYAN}${ARROW_MARK} Checking ${protocol}://${IP}:${port}${NC}"
+    
+    # Full HTTP metrics
+    local http_metrics=$(curl -o /dev/null -s -w "{
+        \"http_code\":%{http_code},
+        \"time_total\":%{time_total},
+        \"time_connect\":%{time_connect},
+        \"time_starttransfer\":%{time_starttransfer},
+        \"size_download\":%{size_download},
+        \"speed_download\":%{speed_download}
+    }" ${protocol}://$IP:$port/ 2>/dev/null)
+    
+    if [ $? -eq 0 ] && [ -n "$http_metrics" ]; then
+        local http_status=$(echo "$http_metrics" | grep -o '"http_code":[0-9]*' | cut -d':' -f2)
+        local time_total=$(echo "$http_metrics" | grep -o '"time_total":[0-9.]*' | cut -d':' -f2)
+        local time_connect=$(echo "$http_metrics" | grep -o '"time_connect":[0-9.]*' | cut -d':' -f2)
+        local time_first_byte=$(echo "$http_metrics" | grep -o '"time_starttransfer":[0-9.]*' | cut -d':' -f2)
+        local size=$(echo "$http_metrics" | grep -o '"size_download":[0-9]*' | cut -d':' -f2)
+        local speed=$(echo "$http_metrics" | grep -o '"speed_download":[0-9.]*' | cut -d':' -f2)
+        
+        local response_time=$(echo "$time_total * 1000" | bc 2>/dev/null | cut -d'.' -f1)
+        local ttfb=$(echo "$time_first_byte * 1000" | bc 2>/dev/null | cut -d'.' -f1)
+        
+        # Check HTTP status
+        if [ "$http_status" -eq 200 ]; then
+            print_status "OK" "HTTP Status" "$http_status"
+        elif [ "$http_status" -ge 500 ]; then
+            print_status "FAIL" "HTTP Status" "$http_status (Server Error)"
+            CRITICAL+=("HTTP ${http_status} error on port $port")
+        elif [ "$http_status" -ge 400 ]; then
+            print_status "WARN" "HTTP Status" "$http_status (Client Error)"
+            WARNINGS+=("HTTP ${http_status} on port $port")
+        else
+            print_status "INFO" "HTTP Status" "$http_status"
+        fi
+        
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}     ${DIM}Response Time: ${response_time:-0} ms | TTFB: ${ttfb:-0} ms${NC}"
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}     ${DIM}Download: ${size:-0} bytes @ $(echo "${speed:-0} / 1024" | bc) KB/s${NC}"
+        
+        # Log metrics
+        log_metric "response_time_$port" "${response_time:-0}" "ms"
+        log_metric "ttfb_$port" "${ttfb:-0}" "ms"
+        
+        # Check redirects
+        if [[ "$http_status" =~ ^30[0-9] ]]; then
+            local redirect_url=$(curl -s -I ${protocol}://$IP:$port/ | grep -i "location" | cut -d' ' -f2)
+            echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}     ${DIM}Redirects to: ${redirect_url}${NC}"
+        fi
+        
+        # SSL/TLS checks for HTTPS
+        if [ "$protocol" = "https" ]; then
+            local ssl_info=$(echo | openssl s_client -servername $TARGET -connect $IP:$port 2>/dev/null | openssl x509 -noout -dates -issuer -subject 2>/dev/null)
+            if [ -n "$ssl_info" ]; then
+                echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}     ${CYAN}SSL/TLS Info:${NC}"
+                
+                # Extract expiry date
+                local end_date=$(echo "$ssl_info" | grep "notAfter" | cut -d'=' -f2)
+                local end_seconds=$(date -d "$end_date" +%s 2>/dev/null)
+                local now_seconds=$(date +%s)
+                local days_left=$(( ($end_seconds - $now_seconds) / 86400 ))
+                
+                local issuer=$(echo "$ssl_info" | grep "issuer" | cut -d'=' -f2 | cut -d',' -f1)
+                echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}       ${DIM}Issuer: ${issuer}${NC}"
+                echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}       ${DIM}Expires: ${end_date} (${days_left} days left)${NC}"
+                
+                log_metric "ssl_days_left_$port" "$days_left" "days"
+            fi
+        fi
+    else
+        print_status "FAIL" "Could not connect" "${protocol}://${IP}:${port}"
+    fi
+}
+
+# Web Server Analysis
+check_web() {
+    draw_section_header "WEB SERVER ANALYSIS" "$BLUE" "4"
+    
+    local web_ports=()
+    for port in "${OPEN_PORTS[@]}"; do
+        if [ "$port" -eq 80 ] || [ "$port" -eq 443 ] || [ "$port" -eq 8080 ] || [ "$port" -eq 8443 ]; then
+            web_ports+=($port)
+        fi
+    done
+    
+    if [ ${#web_ports[@]} -eq 0 ]; then
+        print_status "INFO" "No web ports detected"
+        draw_details_line "Skipping web analysis"
+    else
+        for port in "${web_ports[@]}"; do
+            local protocol="http"
+            [ "$port" -eq 443 ] || [ "$port" -eq 8443 ] && protocol="https"
+            
+            # Check main endpoint
+            check_http $port $protocol
+            
+            # Check common health endpoints in verbose mode
+            if [ "$VERBOSE" = true ]; then
+                for endpoint in "/health" "/healthz" "/ready" "/status" "/metrics"; do
+                    local health_check=$(curl -o /dev/null -s -w "%{http_code}" ${protocol}://$IP:$port$endpoint 2>/dev/null)
+                    if [ "$health_check" -eq 200 ]; then
+                        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}     ${GREEN}${CHECK_MARK} Health endpoint ${endpoint} accessible${NC}"
+                    fi
+                done
+            fi
+        done
+    fi
+    close_section "$BLUE"
+}
+
+# Security Checks with aligned output
+check_security() {
+    [ "$NO_SECURITY" = true ] && return
+    
+    draw_section_header "SECURITY CHECKS" "$BLUE" "5"
+    
+    # Check for open common vulnerable ports
+    local vulnerable_ports=(21 23 445 3389 5900)
+    local vuln_found=false
+    
+    for port in "${vulnerable_ports[@]}"; do
+        timeout 2 bash -c "</dev/tcp/$IP/$port" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            if [ "$vuln_found" = false ]; then
+                print_status "WARN" "Vulnerable ports detected"
+                vuln_found=true
+            fi
+            echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${YELLOW}${WARNING_MARK} Port ${port} is open (security risk)${NC}"
+            WARNINGS+=("Vulnerable port $port is open")
+        fi
+    done
+    
+    if [ "$vuln_found" = false ]; then
+        print_status "OK" "No vulnerable ports detected"
+        draw_details_line "Common attack surface is minimal"
+    fi
+    
+    # Check for security headers on web servers
+    local web_ports=()
+    for port in "${OPEN_PORTS[@]}"; do
+        if [ "$port" -eq 80 ] || [ "$port" -eq 443 ] || [ "$port" -eq 8080 ] || [ "$port" -eq 8443 ]; then
+            web_ports+=($port)
+        fi
+    done
+    
+    for port in "${web_ports[@]}"; do
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}${NC}"
+        local protocol="http"
+        [ "$port" -eq 443 ] || [ "$port" -eq 8443 ] && protocol="https"
+        
+        local headers=$(curl -s -I ${protocol}://$IP:$port/ 2>/dev/null)
+        
+        local security_headers=(
+            "Strict-Transport-Security"
+            "X-Frame-Options"
+            "X-Content-Type-Options"
+            "Content-Security-Policy"
+            "X-XSS-Protection"
+            "Referrer-Policy"
+        )
+        
+        print_status "INFO" "Security headers on port $port"
+        for header in "${security_headers[@]}"; do
+            if echo "$headers" | grep -qi "^$header:"; then
+                echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}     ${GREEN}${CHECK_MARK} ${header} present${NC}"
+            else
+                echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}     ${YELLOW}${WARNING_MARK} ${header} missing${NC}"
+            fi
+        done
+    done
+    close_section "$BLUE"
+}
+
+# Dependency Analysis with aligned output
+check_dependencies() {
+    [ "$NO_DEPENDENCY" = true ] && return
+    
+    draw_section_header "DEPENDENCY ANALYSIS" "$BLUE" "6"
+    
+    # Track dependencies and their relationships
+    declare -A DEPENDENCY_MAP
+    local dependencies_found=0
+    local dependencies_critical=0
+    
+    # Helper function to check service health
+    check_service_health() {
+        local service=$1
+        local port=$2
+        local status="unknown"
+        local details=""
+        
+        if [[ " ${OPEN_PORTS[@]} " =~ " $port " ]]; then
+            case $service in
+                "MySQL")
+                    if command -v mysql &>/dev/null; then
+                        local mysql_result=$(timeout 5 mysql -h $IP -P $port -u anonymous --connect-timeout=2 -e "SELECT 1" 2>&1)
+                        if [[ "$mysql_result" == *"1"* ]]; then
+                            status="healthy"
+                            details="Accepting connections"
+                        elif [[ "$mysql_result" == *"Access denied"* ]]; then
+                            status="degraded"
+                            details="Port open but authentication required"
+                        else
+                            status="unhealthy"
+                            details="Not responding properly"
+                            dependencies_critical=$((dependencies_critical + 1))
+                        fi
+                    else
+                        status="unknown"
+                        details="MySQL client not installed"
+                    fi
+                    ;;
+                    
+                "PostgreSQL")
+                    if command -v psql &>/dev/null; then
+                        export PGPASSWORD=dummy
+                        local pg_result=$(timeout 5 psql -h $IP -p $port -U postgres -c "SELECT 1" 2>&1)
+                        if [[ "$pg_result" == *"1"* ]] || [[ "$pg_result" == *"authentication failed"* ]]; then
+                            status="responding"
+                            details="PostgreSQL port open"
+                        else
+                            status="unhealthy"
+                            details="Not responding to queries"
+                            dependencies_critical=$((dependencies_critical + 1))
+                        fi
+                    else
+                        status="unknown"
+                        details="PostgreSQL client not installed"
+                    fi
+                    ;;
+                    
+                "Elasticsearch")
+                    local es_response=$(curl -s -o /dev/null -w "%{http_code}" "http://$IP:$port/" 2>/dev/null)
+                    if [ "$es_response" = "200" ]; then
+                        # Get cluster health
+                        local es_health=$(curl -s "http://$IP:$port/_cluster/health" 2>/dev/null)
+                        local cluster_status=$(echo "$es_health" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+                        local node_count=$(echo "$es_health" | grep -o '"number_of_nodes":[0-9]*' | cut -d':' -f2)
+                        
+                        case $cluster_status in
+                            "green")
+                                status="healthy"
+                                details="Cluster: GREEN, Nodes: $node_count"
+                                ;;
+                            "yellow")
+                                status="degraded"
+                                details="Cluster: YELLOW, Nodes: $node_count"
+                                WARNINGS+=("Elasticsearch cluster status: yellow")
+                                ;;
+                            "red")
+                                status="critical"
+                                details="Cluster: RED, Nodes: $node_count"
+                                CRITICAL+=("Elasticsearch cluster is RED")
+                                dependencies_critical=$((dependencies_critical + 1))
+                                ;;
+                        esac
+                    else
+                        status="unhealthy"
+                        details="HTTP ${es_response:-timeout}"
+                        dependencies_critical=$((dependencies_critical + 1))
+                    fi
+                    ;;
+                    
+                "Redis")
+                    local redis_response=$(timeout 3 redis-cli -h $IP -p $port ping 2>/dev/null)
+                    if [ "$redis_response" = "PONG" ]; then
+                        # Get Redis info
+                        local redis_info=$(timeout 3 redis-cli -h $IP -p $port INFO 2>/dev/null)
+                        local redis_version=$(echo "$redis_info" | grep "redis_version:" | cut -d':' -f2)
+                        local connected_clients=$(echo "$redis_info" | grep "connected_clients:" | cut -d':' -f2)
+                        local used_memory_human=$(echo "$redis_info" | grep "used_memory_human:" | cut -d':' -f2)
+                        
+                        status="healthy"
+                        details="v$redis_version, Clients: $connected_clients, Memory: $used_memory_human"
+                    else
+                        status="unhealthy"
+                        details="Not responding to PING"
+                        dependencies_critical=$((dependencies_critical + 1))
+                    fi
+                    ;;
+                    
+                "MongoDB")
+                    if command -v mongosh &>/dev/null; then
+                        local mongo_result=$(timeout 5 mongosh --host $IP --port $port --eval "db.adminCommand('ping')" 2>&1)
+                        if [[ "$mongo_result" == *"ok"* ]]; then
+                            status="healthy"
+                            details="Responding to ping"
+                        else
+                            status="unhealthy"
+                            details="Not responding"
+                            dependencies_critical=$((dependencies_critical + 1))
+                        fi
+                    elif command -v mongo &>/dev/null; then
+                        local mongo_result=$(timeout 5 mongo --host $IP --port $port --eval "db.adminCommand('ping')" 2>&1)
+                        if [[ "$mongo_result" == *"ok"* ]]; then
+                            status="healthy"
+                            details="Responding to ping"
+                        else
+                            status="unhealthy"
+                            details="Not responding"
+                            dependencies_critical=$((dependencies_critical + 1))
+                        fi
+                    else
+                        status="unknown"
+                        details="MongoDB client not installed"
+                    fi
+                    ;;
+                    
+                "RabbitMQ")
+                    if [[ " ${OPEN_PORTS[@]} " =~ " 15672 " ]]; then
+                        local rabbit_response=$(curl -s -o /dev/null -w "%{http_code}" "http://$IP:15672/api/overview" 2>/dev/null)
+                        if [ "$rabbit_response" = "200" ] || [ "$rabbit_response" = "401" ]; then
+                            status="responding"
+                            details="Management API accessible"
+                        else
+                            status="unknown"
+                            details="Management API HTTP $rabbit_response"
+                        fi
+                    elif [[ " ${OPEN_PORTS[@]} " =~ " 5672 " ]]; then
+                        status="responding"
+                        details="AMQP port open"
+                    fi
+                    ;;
+                    
+                "Prometheus")
+                    if [[ " ${OPEN_PORTS[@]} " =~ " 9090 " ]]; then
+                        local prom_response=$(curl -s -o /dev/null -w "%{http_code}" "http://$IP:9090/graph" 2>/dev/null)
+                        if [ "$prom_response" = "200" ]; then
+                            status="healthy"
+                            details="Web UI accessible"
+                        else
+                            status="degraded"
+                            details="Port open but web UI not responding"
+                        fi
+                    fi
+                    ;;
+                    
+                "Grafana")
+                    if [[ " ${OPEN_PORTS[@]} " =~ " 3000 " ]]; then
+                        local grafana_response=$(curl -s -o /dev/null -w "%{http_code}" "http://$IP:3000/login" 2>/dev/null)
+                        if [ "$grafana_response" = "200" ]; then
+                            status="healthy"
+                            details="Login page accessible"
+                        else
+                            status="degraded"
+                            details="Port open but not responding properly"
+                        fi
+                    fi
+                    ;;
+            esac
+            
+            dependencies_found=$((dependencies_found + 1))
+            DEPENDENCY_MAP["$service:$port"]="$status:$details"
+        fi
+    }
+    
+    # Check all possible dependencies
+    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${BOLD}${WHITE}Service Dependencies:${NC}"
+    
+    # Database Services
+    check_service_health "MySQL" 3306
+    check_service_health "PostgreSQL" 5432
+    check_service_health "MongoDB" 27017
+    check_service_health "Redis" 6379
+    check_service_health "Elasticsearch" 9200
+    
+    # Message Queues
+    check_service_health "RabbitMQ" 5672
+    check_service_health "RabbitMQ-Management" 15672
+    check_service_health "Kafka" 9092
+    
+    # Monitoring
+    check_service_health "Prometheus" 9090
+    check_service_health "Grafana" 3000
+    
+    # Display dependency status
+    if [ $dependencies_found -eq 0 ]; then
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${DIM}No service dependencies detected${NC}"
+    else
+        for key in "${!DEPENDENCY_MAP[@]}"; do
+            IFS=':' read -r service port <<< "$key"
+            IFS=':' read -r status details <<< "${DEPENDENCY_MAP[$key]}"
+            
+            case $status in
+                "healthy")
+                    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${GREEN}${CHECK_MARK} ${service} (port ${port}) - ${details}${NC}"
+                    ;;
+                "responding")
+                    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${CYAN}${INFO_MARK} ${service} (port ${port}) - ${details}${NC}"
+                    ;;
+                "degraded")
+                    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${YELLOW}${WARNING_MARK} ${service} (port ${port}) - ${details}${NC}"
+                    WARNINGS+=("$service service degraded: $details")
+                    ;;
+                "critical"|"unhealthy")
+                    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${RED}${CROSS_MARK} ${service} (port ${port}) - ${details}${NC}"
+                    CRITICAL+=("$service service critical: $details")
+                    ;;
+                "unknown")
+                    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${GRAY}${INFO_MARK} ${service} (port ${port}) - ${details} (client tools required)${NC}"
+                    ;;
+            esac
+        done
+    fi
+    
+    close_section "$BLUE"
+}
+
+# Performance Metrics with aligned output
+check_performance() {
+    draw_section_header "PERFORMANCE METRICS" "$BLUE" "7"
+    
+    # Network throughput test
+    if [[ " ${OPEN_PORTS[@]} " =~ " 80 " ]] || [[ " ${OPEN_PORTS[@]} " =~ " 443 " ]]; then
+        local protocol="http"
+        local port=80
+        [[ " ${OPEN_PORTS[@]} " =~ " 443 " ]] && protocol="https" && port=443
+        
+        local speed_test=$(curl -o /dev/null -s -w "%{speed_download}" ${protocol}://$IP:$port/ 2>/dev/null)
+        if [ -n "$speed_test" ] && [ "$speed_test" != "0" ]; then
+            local speed_kbps=$(echo "$speed_test / 1024" | bc)
+            echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${CYAN}${INFO_MARK} Download Speed: ${speed_kbps} KB/s${NC}"
+            log_metric "download_speed" "$speed_kbps" "KB/s"
+        fi
+    fi
+    
+    # Connection pooling test
+    echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}${NC}"
+    local success=0
+    local total=5
+    for i in {1..5}; do
+        if timeout 1 bash -c "</dev/tcp/$IP/80" 2>/dev/null; then
+            success=$((success + 1))
+        fi
+        sleep 0.1
+    done
+    local success_rate=$((success * 100 / total))
+    
+    if [ $success_rate -ge 80 ]; then
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${GREEN}${CHECK_MARK} Connection Pooling: ${success_rate}% success (${success}/${total})${NC}"
+    else
+        echo -e "  ${BLUE}${BOX_DRAWING_VERTICAL}   ${YELLOW}${WARNING_MARK} Connection Pooling: ${success_rate}% success (${success}/${total})${NC}"
+        CRITICAL+=("Low connection success rate: ${success_rate}%")
+    fi
+    log_metric "connection_success_rate" "$success_rate" "%"
+    
+    close_section "$BLUE"
+}
+
+# Generate final report with perfect alignment
+generate_report() {
+    calculate_health_score
+    
+    echo
+    # Top border
+    printf "${PURPLE}${BOX_DRAWING_DOUBLE_CORNER_TL}"
+    printf "%0.s${BOX_DRAWING_DOUBLE_HORIZONTAL}" $(seq 1 $((BOX_WIDTH - 2)))
+    printf "${BOX_DRAWING_DOUBLE_CORNER_TR}${NC}\n"
+    
+    # Report title
+    printf "${PURPLE}${BOX_DRAWING_DOUBLE_VERTICAL}${NC}"
+    printf "%*s" 1 ""
+    printf "${BOLD}${WHITE}%s${NC}" "$(center_text "FINAL REPORT - Check #$CHECK_COUNT" $((BOX_WIDTH - 4)))"
+    printf "%*s" 1 ""
+    printf "${PURPLE}${BOX_DRAWING_DOUBLE_VERTICAL}${NC}\n"
+    
+    # Separator
+    printf "${PURPLE}${BOX_DRAWING_DOUBLE_TEE_LEFT}"
+    printf "%0.s${BOX_DRAWING_DOUBLE_HORIZONTAL}" $(seq 1 $((BOX_WIDTH - 2)))
+    printf "${BOX_DRAWING_DOUBLE_TEE_RIGHT}${NC}\n"
+    
+    # Health score gauge
+    echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}Health Score:${NC} ${BOLD}${HEALTH_SCORE}%${NC}"
+    
+    local gauge_width=50
+    local filled=$((HEALTH_SCORE * gauge_width / 100))
+    local empty=$((gauge_width - filled))
+    
+    # Color-coded gauge
+    local gauge_color=$GREEN
+    if [ $HEALTH_SCORE -lt 70 ]; then
+        gauge_color=$RED
+    elif [ $HEALTH_SCORE -lt 90 ]; then
+        gauge_color=$YELLOW
+    fi
+    
+    echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  [${gauge_color}$(printf "%0.s═" $(seq 1 $filled))${GRAY}$(printf "%0.s═" $(seq 1 $empty))${NC}]"
+    
+    # Display critical issues
+    if [ ${#CRITICAL[@]} -gt 0 ]; then
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}║                      CRITICAL ISSUES                        ║${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}╚════════════════════════════════════════════════════════════╝${NC}"
+        for critical in "${CRITICAL[@]}"; do
+            echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}    ${RED}${BOLD}${CROSS_MARK}${NC} ${critical}"
+        done
+    fi
+    
+    # Display warnings
+    if [ ${#WARNINGS[@]} -gt 0 ]; then
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}║                         WARNINGS                            ║${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}╚════════════════════════════════════════════════════════════╝${NC}"
+        for warning in "${WARNINGS[@]}"; do
+            echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}    ${YELLOW}${BOLD}${WARNING_MARK}${NC} ${warning}"
+        done
+    fi
+    
+    # Display metrics summary
+    if [ ${#METRICS[@]} -gt 0 ]; then
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}║                      METRICS SUMMARY                         ║${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}╚════════════════════════════════════════════════════════════╝${NC}"
+        
+        # Format metrics in columns
+        local col1_width=25
+        for metric in "${METRICS[@]}"; do
+            IFS=':' read -r name value <<< "$metric"
+            echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}    ${CYAN}${BULLET_MARK}${NC} ${name}: ${value}"
+        done
+    fi
+    
+    # Overall status
+    echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}${NC}"
+    if [ ${#CRITICAL[@]} -eq 0 ] && [ -z "$ISSUE" ]; then
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${GREEN}${BOLD}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${GREEN}${BOLD}║         ✅ SYSTEM STATUS: HEALTHY                            ║${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${GREEN}${BOLD}╚════════════════════════════════════════════════════════════╝${NC}"
+    else
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${RED}${BOLD}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${RED}${BOLD}║         ❌ SYSTEM STATUS: ISSUES DETECTED                     ║${NC}"
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${RED}${BOLD}╚════════════════════════════════════════════════════════════╝${NC}"
+        
+        if [ -n "$ISSUE" ]; then
+            echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}    ${YELLOW}${BOLD}💡 PRIMARY ISSUE:${NC} ${ISSUE}"
+            echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}    ${YELLOW}${BOLD}💡 SOLUTION:${NC} ${SOLUTION}"
+        fi
+        
+        FAILURE_COUNT=$((FAILURE_COUNT + 1))
+    fi
+    
+    # Availability
+    if [ $CHECK_COUNT -gt 0 ]; then
+        local availability=$(( ( (CHECK_COUNT - FAILURE_COUNT) * 100 ) / CHECK_COUNT ))
+        echo -e "  ${PURPLE}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}Availability:${NC} ${availability}% (${CHECK_COUNT} checks)"
+        log_metric "availability" "$availability" "%"
+    fi
+    
+    # Bottom border
+    printf "${PURPLE}${BOX_DRAWING_DOUBLE_CORNER_BL}"
+    printf "%0.s${BOX_DRAWING_DOUBLE_HORIZONTAL}" $(seq 1 $((BOX_WIDTH - 2)))
+    printf "${BOX_DRAWING_DOUBLE_CORNER_BR}${NC}\n"
+}
+
+# JSON output
+generate_json() {
+    local status="HEALTHY"
+    [ ${#CRITICAL[@]} -gt 0 ] || [ -n "$ISSUE" ] && status="ISSUE"
+    
+    # Create JSON arrays
+    local json_open_ports=$(printf '%s\n' "${OPEN_PORTS[@]}" | jq -R . | jq -s . 2>/dev/null || echo "[]")
+    local json_warnings=$(printf '%s\n' "${WARNINGS[@]}" | jq -R . | jq -s . 2>/dev/null || echo "[]")
+    local json_critical=$(printf '%s\n' "${CRITICAL[@]}" | jq -R . | jq -s . 2>/dev/null || echo "[]")
+    local json_metrics=$(printf '%s\n' "${METRICS[@]}" | jq -R . | jq -s . 2>/dev/null || echo "[]")
+    
+    cat <<EOF
+{
+    "timestamp": "$(date -Iseconds)",
+    "check_number": $CHECK_COUNT,
+    "target": "$TARGET",
+    "ip": "$IP",
+    "status": "$status",
+    "health_score": $HEALTH_SCORE,
+    "issue": "$ISSUE",
+    "solution": "$SOLUTION",
+    "open_ports": $json_open_ports,
+    "warnings": $json_warnings,
+    "critical": $json_critical,
+    "metrics": $json_metrics,
+    "availability": $(( ( (CHECK_COUNT - FAILURE_COUNT) * 100 ) / CHECK_COUNT ))
+}
+EOF
+}
+
+# ============================================================================
+# MAIN MONITORING FUNCTION
+# ============================================================================
+
+run_checks() {
+    CHECK_COUNT=$((CHECK_COUNT + 1))
+    
+    # Reset variables for this check
+    ISSUE=""
+    SOLUTION=""
+    WARNINGS=()
+    CRITICAL=()
+    METRICS=()
+    
+    # Clear screen for better visibility in continuous mode
+    if [ "$CONTINUOUS_MODE" = true ]; then
+        clear
+    fi
+    
+    # Print main header with glow effect
+    draw_glow_header "SMART SRE NETWORK MONITOR" "$CYAN"
+    
+    # Info box with aligned content
+    echo -e "${CYAN}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}Time:${NC}        $(date)"
+    echo -e "${CYAN}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}Target:${NC}      $TARGET"
+    echo -e "${CYAN}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}Check #:${NC}     $CHECK_COUNT"
+    echo -e "${CYAN}${BOX_DRAWING_VERTICAL}  ${BOLD}${WHITE}Thresholds:${NC}  Latency(W:${LATENCY_WARN}/C:${LATENCY_CRIT}) Loss(W:${PACKET_LOSS_WARN}/C:${PACKET_LOSS_CRIT})"
+    echo -e "${CYAN}${BOX_DRAWING_VERTICAL}${NC}"
+    
+    # Run all checks
+    check_dns || return
+    check_network || return
+    check_ports
+    check_web
+    check_security
+    check_dependencies
+    check_performance
+    
+    # Generate report
+    if [ "$JSON_OUTPUT" = true ]; then
+        generate_json
+    else
+        generate_report
+    fi
+}
+
+# ============================================================================
+# SIGNAL HANDLING
+# ============================================================================
+
+cleanup() {
+    echo -e "\n${YELLOW}${INFO_MARK} Monitoring stopped after $CHECK_COUNT checks${NC}"
+    if [ "$JSON_OUTPUT" = true ]; then
+        generate_json
+    fi
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
+# ============================================================================
+# MAIN EXECUTION
+# ============================================================================
+
+# Parse arguments
+parse_args "$@"
+
+# Main loop
+if [ "$CONTINUOUS_MODE" = true ]; then
+    echo -e "${GREEN}${INFO_MARK} Starting continuous monitoring (interval: ${INTERVAL}s)${NC}"
+    echo -e "${GREEN}${INFO_MARK} Press Ctrl+C to stop\n"
+    
+    while true; do
+        run_checks
+        echo -e "\n${YELLOW}${INFO_MARK} Waiting ${INTERVAL} seconds until next check...\n"
+        sleep $INTERVAL
+    done
+else
+    # Single run mode
+    run_checks
+    
+    # Show credits at the end of single run
+    show_credits
+    
+    # Exit with appropriate code
+    if [ ${#CRITICAL[@]} -gt 0 ] || [ -n "$ISSUE" ]; then
+        exit 2
+    elif [ ${#WARNINGS[@]} -gt 0 ]; then
+        exit 1
+    else
+        exit 0
+    fi
+fi
