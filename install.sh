@@ -109,9 +109,29 @@ install_deps() {
 
 create_dirs() {
     print_status "info" "Creating directories..."
-    mkdir -p "$CONFIG_DIR" "$LOG_DIR" "$DATA_DIR"
-    chmod 755 "$CONFIG_DIR" "$LOG_DIR" "$DATA_DIR"
-    print_status "success" "Directories created"
+
+    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$LOG_DIR"
+    mkdir -p "$DATA_DIR"
+
+    # Permissions
+    chmod 755 "$CONFIG_DIR"
+    chmod 755 "$DATA_DIR"
+
+    # Log directory should be writable by normal user
+    chown -R root:adm "$LOG_DIR" 2>/dev/null || chown -R root:root "$LOG_DIR"
+    chmod -R 775 "$LOG_DIR"
+
+    # Add current user to adm group if possible (Ubuntu/Debian)
+    if getent group adm >/dev/null 2>&1; then
+        if ! groups "$SUDO_USER" | grep -q "\badm\b"; then
+            print_status "info" "Adding $SUDO_USER to adm group for log write access..."
+            usermod -aG adm "$SUDO_USER" || true
+            print_status "warn" "Please logout/login once for group changes to take effect."
+        fi
+    fi
+
+    print_status "success" "Directories created with proper permissions"
 }
 
 install_anm() {
