@@ -44,6 +44,8 @@ curl -fsSL https://raw.githubusercontent.com/sundaresan-dev/advanced-network-mon
 ---
 
 ## Clone the repository
+
+```bash
 git clone https://github.com/sundaresan-dev/advanced-network-monitor.git
 cd advanced-network-monitor
 
