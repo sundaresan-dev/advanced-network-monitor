@@ -43,33 +43,33 @@ curl -fsSL https://raw.githubusercontent.com/sundaresan-dev/advanced-network-mon
 
 ---
 
-# Clone the repository
+## Clone the repository
 git clone https://github.com/sundaresan-dev/advanced-network-monitor.git
 cd advanced-network-monitor
 
-# Make the script executable
+## Make the script executable
 chmod +x anm.sh
 
-# Run directly
+## Run directly
 ./anm.sh -t example.com
 
-# Or install manually system-wide
+## Or install manually system-wide
 sudo cp anm.sh /usr/local/bin/anm
 sudo chmod +x /usr/local/bin/anm
 
 ---
-# Basic monitoring
+## Basic monitoring
 anm -t google.com
 
-# Continuous monitoring every 30 seconds
+## Continuous monitoring every 30 seconds
 anm -t api.example.com -c -i 30
 
-# Custom ports with JSON output
+## Custom ports with JSON output
 anm -t myserver.com -p "80 443 3306" -j
 
-# Verbose mode with all checks
+## Verbose mode with all checks
 anm -t example.com -v
 
-# Log output to file
+## Log output to file
 anm -t example.com -l /var/log/anm/monitor.log
 
