@@ -138,8 +138,8 @@ install_deps() {
 install_anm() {
     print_status "info" "Downloading ANM..."
     
-    local script_url="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/anm.sh"
-    local temp_file="/tmp/anm.sh"
+    local script_url="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/anm"
+    local temp_file="/tmp/anm"
     
     if curl -fsSL "$script_url" -o "$temp_file"; then
         cp "$temp_file" "${INSTALL_DIR}/anm"
